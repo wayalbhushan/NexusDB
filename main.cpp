@@ -1430,14 +1430,9 @@ int main() {
         res.set_content(ss.str(), "application/json");
     });
 
-    // Serve index.html
+    // The server now operates as a headless API for the Next.js Neural Terminal
     svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
-        std::ifstream f("index.html");
-        if (!f.is_open()) { res.status = 404; return; }
-        res.set_content(
-            std::string(std::istreambuf_iterator<char>(f),
-                        std::istreambuf_iterator<char>()),
-            "text/html");
+        res.set_content("{\"status\":\"NexusDB Neural Engine Online\",\"api_version\":\"1.5\"}", "application/json");
     });
 
     svr.listen("0.0.0.0", 8080);
