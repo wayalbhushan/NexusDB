@@ -1,6 +1,6 @@
 # ⚡ NexusDB: Robust Vector Engine & Offline RAG
 
-![NexusDB Dashboard](./docs/hero-screenshot.png)
+![NexusDB Dashboard](./hero-screenshot.png)
 
 NexusDB is a highly-concurrent, proprietary Vector Database and offline Retrieval-Augmented Generation (RAG) engine. Built entirely from scratch, this project bridges low-level systems engineering with high-fidelity enterprise data visualization.
 
