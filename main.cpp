@@ -7,6 +7,7 @@
 #include <random>
 #include <chrono>
 #include <mutex>
+#include <shared_mutex>  // Upgrade 1: reader-writer lock for concurrent access
 #include <unordered_map>
 #include <queue>
 #include <set>
@@ -36,25 +37,76 @@ using DistFn = std::function<float(const std::vector<float>&, const std::vector<
 //  DISTANCE METRICS
 // =====================================================================
 
+// =====================================================================
+//  DISTANCE METRICS  (Upgrade 3: 8-wide loop unrolling)
+//  Manual unrolling processes 8 dimensions per iteration so the compiler
+//  can emit SIMD instructions (SSE/AVX) under -O2 or -O3 without raw
+//  intrinsics — keeps the code standard C++17.
+// =====================================================================
+
 float euclidean(const std::vector<float>& a, const std::vector<float>& b) {
-    float s = 0;
-    for (int i = 0; i < (int)a.size(); i++) { float d = a[i]-b[i]; s += d*d; }
-    return std::sqrt(s);
+    const int n   = (int)a.size();
+    const int n8  = n - (n % 8);   // largest multiple of 8 <= n
+    float s0=0,s1=0,s2=0,s3=0,s4=0,s5=0,s6=0,s7=0;
+
+    // 8-wide unrolled core — compiler maps each lane to a SIMD register
+    for (int i = 0; i < n8; i += 8) {
+        float d0=a[i  ]-b[i  ], d1=a[i+1]-b[i+1],
+              d2=a[i+2]-b[i+2], d3=a[i+3]-b[i+3],
+              d4=a[i+4]-b[i+4], d5=a[i+5]-b[i+5],
+              d6=a[i+6]-b[i+6], d7=a[i+7]-b[i+7];
+        s0+=d0*d0; s1+=d1*d1; s2+=d2*d2; s3+=d3*d3;
+        s4+=d4*d4; s5+=d5*d5; s6+=d6*d6; s7+=d7*d7;
+    }
+    // Scalar tail for dimensions not divisible by 8
+    float tail = 0;
+    for (int i = n8; i < n; i++) { float d=a[i]-b[i]; tail+=d*d; }
+    return std::sqrt(s0+s1+s2+s3+s4+s5+s6+s7+tail);
 }
 
 float cosine(const std::vector<float>& a, const std::vector<float>& b) {
-    float dot=0, na=0, nb=0;
-    for (int i = 0; i < (int)a.size(); i++) {
-        dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i];
+    const int n  = (int)a.size();
+    const int n8 = n - (n % 8);
+    // Accumulate dot-product and norms in 8 independent accumulators each
+    float dot0=0,dot1=0,dot2=0,dot3=0,dot4=0,dot5=0,dot6=0,dot7=0;
+    float  na0=0, na1=0, na2=0, na3=0, na4=0, na5=0, na6=0, na7=0;
+    float  nb0=0, nb1=0, nb2=0, nb3=0, nb4=0, nb5=0, nb6=0, nb7=0;
+
+    for (int i = 0; i < n8; i += 8) {
+        dot0+=a[i  ]*b[i  ]; na0+=a[i  ]*a[i  ]; nb0+=b[i  ]*b[i  ];
+        dot1+=a[i+1]*b[i+1]; na1+=a[i+1]*a[i+1]; nb1+=b[i+1]*b[i+1];
+        dot2+=a[i+2]*b[i+2]; na2+=a[i+2]*a[i+2]; nb2+=b[i+2]*b[i+2];
+        dot3+=a[i+3]*b[i+3]; na3+=a[i+3]*a[i+3]; nb3+=b[i+3]*b[i+3];
+        dot4+=a[i+4]*b[i+4]; na4+=a[i+4]*a[i+4]; nb4+=b[i+4]*b[i+4];
+        dot5+=a[i+5]*b[i+5]; na5+=a[i+5]*a[i+5]; nb5+=b[i+5]*b[i+5];
+        dot6+=a[i+6]*b[i+6]; na6+=a[i+6]*a[i+6]; nb6+=b[i+6]*b[i+6];
+        dot7+=a[i+7]*b[i+7]; na7+=a[i+7]*a[i+7]; nb7+=b[i+7]*b[i+7];
+    }
+    float dot=dot0+dot1+dot2+dot3+dot4+dot5+dot6+dot7;
+    float na = na0+ na1+ na2+ na3+ na4+ na5+ na6+ na7;
+    float nb = nb0+ nb1+ nb2+ nb3+ nb4+ nb5+ nb6+ nb7;
+    // Scalar tail
+    for (int i = n8; i < n; i++) {
+        dot+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i];
     }
     if (na < 1e-9f || nb < 1e-9f) return 1.0f;
     return 1.0f - dot / (std::sqrt(na) * std::sqrt(nb));
 }
 
 float manhattan(const std::vector<float>& a, const std::vector<float>& b) {
-    float s = 0;
-    for (int i = 0; i < (int)a.size(); i++) s += std::abs(a[i]-b[i]);
-    return s;
+    const int n  = (int)a.size();
+    const int n8 = n - (n % 8);
+    float s0=0,s1=0,s2=0,s3=0,s4=0,s5=0,s6=0,s7=0;
+
+    for (int i = 0; i < n8; i += 8) {
+        s0+=std::abs(a[i  ]-b[i  ]); s1+=std::abs(a[i+1]-b[i+1]);
+        s2+=std::abs(a[i+2]-b[i+2]); s3+=std::abs(a[i+3]-b[i+3]);
+        s4+=std::abs(a[i+4]-b[i+4]); s5+=std::abs(a[i+5]-b[i+5]);
+        s6+=std::abs(a[i+6]-b[i+6]); s7+=std::abs(a[i+7]-b[i+7]);
+    }
+    float tail = 0;
+    for (int i = n8; i < n; i++) tail += std::abs(a[i]-b[i]);
+    return s0+s1+s2+s3+s4+s5+s6+s7+tail;
 }
 
 DistFn getDistFn(const std::string& m) {
@@ -163,18 +215,19 @@ public:
 // =====================================================================
 
 class HNSW {
+    int    M, M0, ef_build;
+    float  mL;
+    std::mt19937 rng;
+
+public:   // expose internals for Upgrade 2 (disk serialization)
     struct Node {
         VectorItem item;
         int maxLyr;
         std::vector<std::vector<int>> nbrs;
     };
-
     std::unordered_map<int, Node> G;
-    int    M, M0, ef_build;
-    float  mL;
-    int    topLayer = -1;
-    int    entryPt  = -1;
-    std::mt19937 rng;
+    int topLayer = -1;
+    int entryPt  = -1;
 
     int randLevel() {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
@@ -339,17 +392,33 @@ class VectorDB {
     BruteForce bf;
     KDTree     kdt;
     HNSW       hnsw;
-    std::mutex mu;
+    mutable std::shared_mutex mu;  // Upgrade 1: RW lock — many readers OR one writer
     int nextId = 1;
+
+    // ── Persistence helpers (Upgrade 2) ──────────────────────────────
+    static void writeStr(std::ofstream& f, const std::string& s) {
+        uint32_t len = (uint32_t)s.size();
+        f.write(reinterpret_cast<const char*>(&len), sizeof(len));
+        f.write(s.data(), len);
+    }
+    static std::string readStr(std::ifstream& f) {
+        uint32_t len = 0;
+        f.read(reinterpret_cast<char*>(&len), sizeof(len));
+        std::string s(len, '\0');
+        f.read(&s[0], len);
+        return s;
+    }
 
 public:
     const int dims;
     explicit VectorDB(int d) : kdt(d), hnsw(16, 200), dims(d) {}
 
+    // ── WRITE operations: exclusive lock ────────────────────────────
+
     int insert(const std::string& meta, const std::string& cat,
                const std::vector<float>& emb, DistFn dist)
     {
-        std::lock_guard<std::mutex> lk(mu);
+        std::unique_lock<std::shared_mutex> lk(mu);  // exclusive write
         VectorItem v{nextId++, meta, cat, emb};
         store[v.id] = v;
         bf.insert(v); kdt.insert(v); hnsw.insert(v, dist);
@@ -357,7 +426,7 @@ public:
     }
 
     bool remove(int id) {
-        std::lock_guard<std::mutex> lk(mu);
+        std::unique_lock<std::shared_mutex> lk(mu);  // exclusive write
         if (!store.count(id)) return false;
         store.erase(id); bf.remove(id); hnsw.remove(id);
         std::vector<VectorItem> rem;
@@ -366,13 +435,15 @@ public:
         return true;
     }
 
+    // ── READ operations: shared lock (concurrent-safe) ───────────────
+
     struct Hit { int id; std::string meta, cat; std::vector<float> emb; float dist; };
     struct SearchOut { std::vector<Hit> hits; long long us; std::string algo, metric; };
 
     SearchOut search(const std::vector<float>& q, int k,
                      const std::string& metric, const std::string& algo)
     {
-        std::lock_guard<std::mutex> lk(mu);
+        std::shared_lock<std::shared_mutex> lk(mu);  // shared read — allows concurrent searches
         auto dfn = getDistFn(metric);
         auto t0  = std::chrono::high_resolution_clock::now();
 
@@ -394,7 +465,7 @@ public:
     struct BenchOut { long long bfUs, kdUs, hnswUs; int n; };
 
     BenchOut benchmark(const std::vector<float>& q, int k, const std::string& metric) {
-        std::lock_guard<std::mutex> lk(mu);
+        std::shared_lock<std::shared_mutex> lk(mu);  // shared read
         auto dfn  = getDistFn(metric);
         auto time = [&](auto fn) -> long long {
             auto t = std::chrono::high_resolution_clock::now();
@@ -411,20 +482,135 @@ public:
     }
 
     std::vector<VectorItem> all() {
-        std::lock_guard<std::mutex> lk(mu);
+        std::shared_lock<std::shared_mutex> lk(mu);  // shared read
         std::vector<VectorItem> r;
         for (auto& [id, v] : store) r.push_back(v);
         return r;
     }
 
     HNSW::GraphInfo hnswInfo() {
-        std::lock_guard<std::mutex> lk(mu);
+        std::shared_lock<std::shared_mutex> lk(mu);  // shared read
         return hnsw.getInfo();
     }
 
-    size_t size() {
-        std::lock_guard<std::mutex> lk(mu);
+    size_t size() const {
+        std::shared_lock<std::shared_mutex> lk(mu);  // shared read
         return store.size();
+    }
+
+    // ── Upgrade 2: Disk Persistence ──────────────────────────────────
+    // Binary format:
+    //   [uint32 magic][uint32 dims][uint32 nextId][uint32 count]
+    //   Per vector: [int id][str meta][str cat][float*dims emb]
+    //   Then HNSW adjacency: [int entryPt][int topLayer]
+    //   Per HNSW node: [int id][int maxLyr][uint32 num_layers]
+    //     Per layer: [uint32 num_nbrs][int* nbrs]
+
+    bool save_to_disk(const std::string& filename) {
+        std::unique_lock<std::shared_mutex> lk(mu);  // exclusive while writing
+        std::ofstream f(filename, std::ios::binary | std::ios::trunc);
+        if (!f.is_open()) return false;
+
+        const uint32_t MAGIC = 0x4E584442u;  // 'NXDB'
+        uint32_t count = (uint32_t)store.size();
+        f.write(reinterpret_cast<const char*>(&MAGIC),   sizeof(MAGIC));
+        f.write(reinterpret_cast<const char*>(&count),   sizeof(count));
+        uint32_t d32 = (uint32_t)dims;
+        f.write(reinterpret_cast<const char*>(&d32),     sizeof(d32));
+        f.write(reinterpret_cast<const char*>(&nextId),  sizeof(nextId));
+
+        // Serialize raw vector store
+        for (auto& [id, v] : store) {
+            f.write(reinterpret_cast<const char*>(&v.id), sizeof(v.id));
+            writeStr(f, v.metadata);
+            writeStr(f, v.category);
+            f.write(reinterpret_cast<const char*>(v.emb.data()),
+                    (std::streamsize)(v.emb.size() * sizeof(float)));
+        }
+
+        // Serialize HNSW graph: entry point, top layer, adjacency
+        auto& G = hnsw.G;
+        f.write(reinterpret_cast<const char*>(&hnsw.entryPt),  sizeof(hnsw.entryPt));
+        f.write(reinterpret_cast<const char*>(&hnsw.topLayer), sizeof(hnsw.topLayer));
+        uint32_t gsize = (uint32_t)G.size();
+        f.write(reinterpret_cast<const char*>(&gsize), sizeof(gsize));
+        for (auto& [nid, nd] : G) {
+            f.write(reinterpret_cast<const char*>(&nid),      sizeof(nid));
+            f.write(reinterpret_cast<const char*>(&nd.maxLyr), sizeof(nd.maxLyr));
+            uint32_t nlayers = (uint32_t)nd.nbrs.size();
+            f.write(reinterpret_cast<const char*>(&nlayers), sizeof(nlayers));
+            for (auto& layer : nd.nbrs) {
+                uint32_t n = (uint32_t)layer.size();
+                f.write(reinterpret_cast<const char*>(&n), sizeof(n));
+                if (n) f.write(reinterpret_cast<const char*>(layer.data()),
+                               (std::streamsize)(n * sizeof(int)));
+            }
+        }
+        std::cout << "[NexusDB] Saved " << count << " vectors to " << filename << std::endl;
+        return true;
+    }
+
+    bool load_from_disk(const std::string& filename) {
+        std::unique_lock<std::shared_mutex> lk(mu);  // exclusive while rebuilding
+        std::ifstream f(filename, std::ios::binary);
+        if (!f.is_open()) {
+            // First boot — no snapshot yet, not an error
+            std::cout << "[NexusDB] No snapshot found at '" << filename
+                      << "' — starting fresh." << std::endl;
+            return false;
+        }
+
+        uint32_t MAGIC = 0, count = 0, d32 = 0;
+        f.read(reinterpret_cast<char*>(&MAGIC),  sizeof(MAGIC));
+        if (MAGIC != 0x4E584442u) {
+            std::cerr << "[NexusDB] Bad magic in " << filename << " — ignoring." << std::endl;
+            return false;
+        }
+        f.read(reinterpret_cast<char*>(&count),   sizeof(count));
+        f.read(reinterpret_cast<char*>(&d32),     sizeof(d32));
+        f.read(reinterpret_cast<char*>(&nextId),  sizeof(nextId));
+
+        // Rebuild store, brute-force, KD-tree
+        store.clear(); bf = BruteForce{}; kdt.rebuild({});
+        for (uint32_t i = 0; i < count; i++) {
+            VectorItem v;
+            f.read(reinterpret_cast<char*>(&v.id), sizeof(v.id));
+            v.metadata = readStr(f);
+            v.category = readStr(f);
+            v.emb.resize(d32);
+            f.read(reinterpret_cast<char*>(v.emb.data()),
+                   (std::streamsize)(d32 * sizeof(float)));
+            store[v.id] = v;
+            bf.insert(v);
+        }
+        // Rebuild KD-tree from store
+        { std::vector<VectorItem> all; for (auto& [id,v]:store) all.push_back(v); kdt.rebuild(all); }
+
+        // Restore HNSW adjacency graph
+        auto& G = hnsw.G; G.clear();
+        f.read(reinterpret_cast<char*>(&hnsw.entryPt),  sizeof(hnsw.entryPt));
+        f.read(reinterpret_cast<char*>(&hnsw.topLayer), sizeof(hnsw.topLayer));
+        uint32_t gsize = 0;
+        f.read(reinterpret_cast<char*>(&gsize), sizeof(gsize));
+        for (uint32_t i = 0; i < gsize; i++) {
+            int nid = 0, maxLyr = 0;
+            f.read(reinterpret_cast<char*>(&nid),    sizeof(nid));
+            f.read(reinterpret_cast<char*>(&maxLyr), sizeof(maxLyr));
+            uint32_t nlayers = 0;
+            f.read(reinterpret_cast<char*>(&nlayers), sizeof(nlayers));
+            HNSW::Node nd; nd.maxLyr = maxLyr; nd.nbrs.resize(nlayers);
+            if (store.count(nid)) nd.item = store[nid];
+            for (uint32_t l = 0; l < nlayers; l++) {
+                uint32_t n = 0;
+                f.read(reinterpret_cast<char*>(&n), sizeof(n));
+                nd.nbrs[l].resize(n);
+                if (n) f.read(reinterpret_cast<char*>(nd.nbrs[l].data()),
+                              (std::streamsize)(n * sizeof(int)));
+            }
+            G[nid] = std::move(nd);
+        }
+        std::cout << "[NexusDB] Loaded " << count << " vectors from " << filename << std::endl;
+        return true;
     }
 };
 
@@ -614,8 +800,8 @@ public:
     // Returns empty vector if Ollama is not running or model not found
     std::vector<float> embed(const std::string& text) {
         httplib::Client cli(host, port);
-        cli.set_connection_timeout(3, 0);
-        cli.set_read_timeout(30, 0);
+        cli.set_connection_timeout(5, 0);
+        cli.set_read_timeout(120, 0);   // Allow time for cold starts
         std::string body = "{\"model\":\"" + embedModel + "\",\"prompt\":\"" + esc(text) + "\"}";
         auto res = cli.Post("/api/embeddings", body, "application/json");
         if (!res || res->status != 200) return {};
@@ -652,18 +838,31 @@ class DocumentDB {
     std::unordered_map<int, DocItem> store;
     HNSW       hnsw;
     BruteForce bf;       // brute force fallback for small sets
-    std::mutex mu;
+    mutable std::shared_mutex mu;  // Upgrade 1: RW lock
     int nextId = 1;
-    int dims   = 0;      // determined from first inserted embedding
+    int dims   = 0;
+
+    // ── Persistence helpers (Upgrade 2) ──────────────────────────────
+    static void writeStr(std::ofstream& f, const std::string& s) {
+        uint32_t len = (uint32_t)s.size();
+        f.write(reinterpret_cast<const char*>(&len), sizeof(len));
+        f.write(s.data(), len);
+    }
+    static std::string readStr(std::ifstream& f) {
+        uint32_t len = 0;
+        f.read(reinterpret_cast<char*>(&len), sizeof(len));
+        std::string s(len, '\0');
+        f.read(&s[0], len);
+        return s;
+    }
 
 public:
     DocumentDB() : hnsw(16, 200) {}
 
-    // Insert one chunk with its pre-computed embedding
     int insert(const std::string& title, const std::string& text,
                const std::vector<float>& emb)
     {
-        std::lock_guard<std::mutex> lk(mu);
+        std::unique_lock<std::shared_mutex> lk(mu);  // exclusive write
         if (dims == 0) dims = (int)emb.size();
         DocItem item{nextId++, title, text, emb};
         store[item.id] = item;
@@ -673,11 +872,10 @@ public:
         return item.id;
     }
 
-    // Semantic search — returns top-k most similar chunks
     std::vector<std::pair<float, DocItem>> search(
         const std::vector<float>& q, int k, float max_dist = 0.7f)
     {
-        std::lock_guard<std::mutex> lk(mu);
+        std::shared_lock<std::shared_mutex> lk(mu);  // shared read
         if (store.empty()) return {};
         auto raw = (store.size() < 10)
                    ? bf.knn(q, k, cosine)
@@ -689,25 +887,120 @@ public:
     }
 
     bool remove(int id) {
-        std::lock_guard<std::mutex> lk(mu);
+        std::unique_lock<std::shared_mutex> lk(mu);  // exclusive write
         if (!store.count(id)) return false;
         store.erase(id); hnsw.remove(id); bf.remove(id);
         return true;
     }
 
     std::vector<DocItem> all() {
-        std::lock_guard<std::mutex> lk(mu);
+        std::shared_lock<std::shared_mutex> lk(mu);  // shared read
         std::vector<DocItem> r;
         for (auto& [id, v] : store) r.push_back(v);
         return r;
     }
 
-    size_t size() {
-        std::lock_guard<std::mutex> lk(mu);
+    size_t size() const {
+        std::shared_lock<std::shared_mutex> lk(mu);  // shared read
         return store.size();
     }
 
-    int getDims() { return dims; }
+    int getDims() const { return dims; }
+
+    bool save_to_disk(const std::string& filename) {
+        std::unique_lock<std::shared_mutex> lk(mu);
+        std::ofstream f(filename, std::ios::binary | std::ios::trunc);
+        if (!f.is_open()) return false;
+
+        const uint32_t MAGIC = 0x44434442u;  // 'DCDB'
+        uint32_t count = (uint32_t)store.size();
+        f.write(reinterpret_cast<const char*>(&MAGIC),   sizeof(MAGIC));
+        f.write(reinterpret_cast<const char*>(&count),   sizeof(count));
+        uint32_t d32 = (uint32_t)dims;
+        f.write(reinterpret_cast<const char*>(&d32),     sizeof(d32));
+        f.write(reinterpret_cast<const char*>(&nextId),  sizeof(nextId));
+
+        for (auto& [id, v] : store) {
+            f.write(reinterpret_cast<const char*>(&v.id), sizeof(v.id));
+            writeStr(f, v.title);
+            writeStr(f, v.text);
+            f.write(reinterpret_cast<const char*>(v.emb.data()),
+                    (std::streamsize)(v.emb.size() * sizeof(float)));
+        }
+
+        // HNSW graph
+        f.write(reinterpret_cast<const char*>(&hnsw.entryPt),  sizeof(hnsw.entryPt));
+        f.write(reinterpret_cast<const char*>(&hnsw.topLayer), sizeof(hnsw.topLayer));
+        uint32_t gsize = (uint32_t)hnsw.G.size();
+        f.write(reinterpret_cast<const char*>(&gsize), sizeof(gsize));
+        for (auto& [nid, nd] : hnsw.G) {
+            f.write(reinterpret_cast<const char*>(&nid),      sizeof(nid));
+            f.write(reinterpret_cast<const char*>(&nd.maxLyr), sizeof(nd.maxLyr));
+            uint32_t nlayers = (uint32_t)nd.nbrs.size();
+            f.write(reinterpret_cast<const char*>(&nlayers), sizeof(nlayers));
+            for (auto& layer : nd.nbrs) {
+                uint32_t n = (uint32_t)layer.size();
+                f.write(reinterpret_cast<const char*>(&n), sizeof(n));
+                if (n) f.write(reinterpret_cast<const char*>(layer.data()),
+                               (std::streamsize)(n * sizeof(int)));
+            }
+        }
+        return true;
+    }
+
+    bool load_from_disk(const std::string& filename) {
+        std::unique_lock<std::shared_mutex> lk(mu);
+        std::ifstream f(filename, std::ios::binary);
+        if (!f.is_open()) return false;
+
+        uint32_t MAGIC = 0, count = 0, d32 = 0;
+        f.read(reinterpret_cast<char*>(&MAGIC),  sizeof(MAGIC));
+        if (MAGIC != 0x44434442u) return false;
+        f.read(reinterpret_cast<char*>(&count),   sizeof(count));
+        f.read(reinterpret_cast<char*>(&d32),     sizeof(d32));
+        f.read(reinterpret_cast<char*>(&nextId),  sizeof(nextId));
+
+        store.clear(); bf = BruteForce{}; hnsw.G.clear();
+        dims = (int)d32;
+
+        for (uint32_t i = 0; i < count; i++) {
+            DocItem v;
+            f.read(reinterpret_cast<char*>(&v.id), sizeof(v.id));
+            v.title = readStr(f);
+            v.text  = readStr(f);
+            v.emb.resize(d32);
+            f.read(reinterpret_cast<char*>(v.emb.data()),
+                   (std::streamsize)(d32 * sizeof(float)));
+            store[v.id] = v;
+            VectorItem vi{v.id, v.title, "doc", v.emb};
+            bf.insert(vi);
+        }
+
+        f.read(reinterpret_cast<char*>(&hnsw.entryPt),  sizeof(hnsw.entryPt));
+        f.read(reinterpret_cast<char*>(&hnsw.topLayer), sizeof(hnsw.topLayer));
+        uint32_t gsize = 0;
+        f.read(reinterpret_cast<char*>(&gsize), sizeof(gsize));
+        for (uint32_t i = 0; i < gsize; i++) {
+            int nid = 0, maxLyr = 0;
+            f.read(reinterpret_cast<char*>(&nid),    sizeof(nid));
+            f.read(reinterpret_cast<char*>(&maxLyr), sizeof(maxLyr));
+            uint32_t nlayers = 0;
+            f.read(reinterpret_cast<char*>(&nlayers), sizeof(nlayers));
+            HNSW::Node nd; nd.maxLyr = maxLyr; nd.nbrs.resize(nlayers);
+            if (store.count(nid)) {
+                nd.item = {nid, store[nid].title, "doc", store[nid].emb};
+            }
+            for (uint32_t l = 0; l < nlayers; l++) {
+                uint32_t n = 0;
+                f.read(reinterpret_cast<char*>(&n), sizeof(n));
+                nd.nbrs[l].resize(n);
+                if (n) f.read(reinterpret_cast<char*>(nd.nbrs[l].data()),
+                              (std::streamsize)(n * sizeof(int)));
+            }
+            hnsw.G[nid] = std::move(nd);
+        }
+        return true;
+    }
 };
 
 // =====================================================================
@@ -768,13 +1061,23 @@ int main() {
     DocumentDB docDB;
     OllamaClient ollama;
 
-    loadDemo(db);
+    // Upgrade 2: attempt to restore previously saved state on startup
+    static const std::string SNAPSHOT     = "nexusdb.bin";
+    static const std::string DOC_SNAPSHOT = "docdb.bin";
+    
+    bool restored    = db.load_from_disk(SNAPSHOT);
+    bool docRestored = docDB.load_from_disk(DOC_SNAPSHOT);
+
+    // Only seed demo data if we have a fresh (empty) database
+    if (!restored) loadDemo(db);
 
     // Check Ollama at startup (non-fatal)
     bool ollamaUp = ollama.isAvailable();
-    std::cout << "=== VectorDB Engine ===" << std::endl;
+    std::cout << "=== NexusDB Engine (Production Build) ===" << std::endl;
     std::cout << "http://localhost:8080" << std::endl;
-    std::cout << db.size() << " demo vectors | " << DIMS << " dims | HNSW+KD-Tree+BruteForce" << std::endl;
+    std::cout << db.size() << " vectors | " << DIMS << " dims | HNSW+KD-Tree+BruteForce" << std::endl;
+    std::cout << "Demo Snapshot: " << (restored ? "loaded from " + SNAPSHOT : "none (fresh start)") << std::endl;
+    std::cout << "Doc Snapshot:  " << (docRestored ? "loaded from " + DOC_SNAPSHOT : "none (fresh start)") << std::endl;
     std::cout << "Ollama: " << (ollamaUp ? "ONLINE" : "OFFLINE (install from ollama.com)") << std::endl;
     if (ollamaUp) std::cout << "  embed model: " << ollama.embedModel
                             << "  gen model: "   << ollama.genModel << std::endl;
@@ -995,58 +1298,65 @@ int main() {
         res.set_content(ss.str(), "application/json");
     });
 
-    // POST /doc/ask  {"question":"...","k":3}
-    // Full RAG pipeline: embed → retrieve → generate
     svr.Post("/doc/ask", [&](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("X-Engine", "NexusDB");
         cors(res);
-        auto question = extractStr(req.body, "question");
-        int  k        = extractInt(req.body, "k", 3);
-        if (question.empty()) {
-            res.set_content("{\"error\":\"need question\"}", "application/json"); return;
+        try {
+            auto question = extractStr(req.body, "question");
+            int  k        = extractInt(req.body, "k", 3);
+            if (question.empty()) {
+                res.set_content("{\"error\":\"need question\"}", "application/json"); return;
+            }
+
+            // Step 1: embed the question
+            auto qEmb = ollama.embed(question);
+            if (qEmb.empty()) {
+                res.set_content("{\"error\":\"Ollama unavailable or Model not loaded\"}", "application/json"); return;
+            }
+
+            // Step 2: retrieve top-k relevant chunks
+            auto hits = docDB.search(qEmb, k);
+
+            // Step 3: build prompt
+            std::ostringstream ctx;
+            for (int i = 0; i < (int)hits.size(); i++) {
+                ctx << "[" << (i+1) << "] " << hits[i].second.title << ":\n"
+                    << hits[i].second.text << "\n\n";
+            }
+            std::string prompt =
+                "You are a helpful assistant. Answer the user's question directly. "
+                "Use the provided context if it contains relevant information. "
+                "If it doesn't, just use your own general knowledge. "
+                "IMPORTANT: Do NOT mention the 'context', 'provided text', or say things like 'the context doesn't mention'. "
+                "Just answer the question naturally.\n\n"
+                "Context:\n" + ctx.str() +
+                "Question: " + question + "\n\n"
+                "Answer:";
+
+            // Step 4: generate answer
+            auto answer = ollama.generate(prompt);
+
+            // Step 5: return everything
+            std::ostringstream ss;
+            ss << "{\"answer\":" << jS(answer)
+               << ",\"model\":"  << jS(ollama.genModel)
+               << ",\"contexts\":[";
+            for (size_t i = 0; i < hits.size(); i++) {
+                if (i) ss << ',';
+                ss << "{\"id\":"       << hits[i].second.id
+                   << ",\"title\":"    << jS(hits[i].second.title)
+                   << ",\"text\":"     << jS(hits[i].second.text)
+                   << ",\"distance\":" << std::fixed << std::setprecision(4) << hits[i].first << '}';
+            }
+            ss << "],\"docCount\":" << docDB.size() << '}';
+            res.set_content(ss.str(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content("{\"error\":\"Internal Exception: " + std::string(e.what()) + "\"}", "application/json");
+        } catch (...) {
+            res.status = 500;
+            res.set_content("{\"error\":\"Unknown Internal Failure\"}", "application/json");
         }
-
-        // Step 1: embed the question
-        auto qEmb = ollama.embed(question);
-        if (qEmb.empty()) {
-            res.set_content("{\"error\":\"Ollama unavailable\"}", "application/json"); return;
-        }
-
-        // Step 2: retrieve top-k relevant chunks
-        auto hits = docDB.search(qEmb, k);
-
-        // Step 3: build prompt
-        std::ostringstream ctx;
-        for (int i = 0; i < (int)hits.size(); i++) {
-            ctx << "[" << (i+1) << "] " << hits[i].second.title << ":\n"
-                << hits[i].second.text << "\n\n";
-        }
-        std::string prompt =
-            "You are a helpful assistant. Answer the user's question directly. "
-            "Use the provided context if it contains relevant information. "
-            "If it doesn't, just use your own general knowledge. "
-            "IMPORTANT: Do NOT mention the 'context', 'provided text', or say things like 'the context doesn't mention'. "
-            "Just answer the question naturally.\n\n"
-            "Context:\n" + ctx.str() +
-            "Question: " + question + "\n\n"
-            "Answer:";
-
-        // Step 4: generate answer
-        auto answer = ollama.generate(prompt);
-
-        // Step 5: return everything
-        std::ostringstream ss;
-        ss << "{\"answer\":" << jS(answer)
-           << ",\"model\":"  << jS(ollama.genModel)
-           << ",\"contexts\":[";
-        for (size_t i = 0; i < hits.size(); i++) {
-            if (i) ss << ',';
-            ss << "{\"id\":"       << hits[i].second.id
-               << ",\"title\":"    << jS(hits[i].second.title)
-               << ",\"text\":"     << jS(hits[i].second.text)
-               << ",\"distance\":" << std::fixed << std::setprecision(4) << hits[i].first << '}';
-        }
-        ss << "],\"docCount\":" << docDB.size() << '}';
-        res.set_content(ss.str(), "application/json");
     });
 
     // GET /status
@@ -1071,6 +1381,52 @@ int main() {
            << ",\"dims\":"       << DIMS
            << ",\"algorithms\":[\"bruteforce\",\"kdtree\",\"hnsw\"]"
            << ",\"metrics\":[\"euclidean\",\"cosine\",\"manhattan\"]}";
+        res.set_content(ss.str(), "application/json");
+    });
+
+    // ── Upgrade 2: Persistence endpoints ─────────────────────────────
+
+    // POST /save  — trigger a manual snapshot of the demo vector index
+    // Returns: {"ok":true,"file":"nexusdb.bin","count":N}
+    svr.Post("/save", [&](const httplib::Request&, httplib::Response& res) {
+        cors(res);
+        bool ok = db.save_to_disk(SNAPSHOT);
+        std::ostringstream ss;
+        ss << "{\"ok\":" << (ok ? "true" : "false")
+           << ",\"file\":" << jS(SNAPSHOT)
+           << ",\"count\":" << db.size() << '}';
+        res.set_content(ss.str(), "application/json");
+    });
+
+    // GET /save  — convenience alias (e.g. trigger from browser)
+    svr.Get("/save", [&](const httplib::Request&, httplib::Response& res) {
+        cors(res);
+        bool ok = db.save_to_disk(SNAPSHOT);
+        std::ostringstream ss;
+        ss << "{\"ok\":" << (ok ? "true" : "false")
+           << ",\"file\":" << jS(SNAPSHOT)
+           << ",\"count\":" << db.size() << '}';
+        res.set_content(ss.str(), "application/json");
+    });
+
+    // POST /doc/save  — trigger a manual snapshot of the RAG document index
+    svr.Post("/doc/save", [&](const httplib::Request&, httplib::Response& res) {
+        cors(res);
+        bool ok = docDB.save_to_disk(DOC_SNAPSHOT);
+        std::ostringstream ss;
+        ss << "{\"ok\":" << (ok ? "true" : "false")
+           << ",\"file\":" << jS(DOC_SNAPSHOT)
+           << ",\"count\":" << docDB.size() << '}';
+        res.set_content(ss.str(), "application/json");
+    });
+
+    svr.Get("/doc/save", [&](const httplib::Request&, httplib::Response& res) {
+        cors(res);
+        bool ok = docDB.save_to_disk(DOC_SNAPSHOT);
+        std::ostringstream ss;
+        ss << "{\"ok\":" << (ok ? "true" : "false")
+           << ",\"file\":" << jS(DOC_SNAPSHOT)
+           << ",\"count\":" << docDB.size() << '}';
         res.set_content(ss.str(), "application/json");
     });
 
