@@ -1,326 +1,139 @@
-# VectorDB — Build a Vector Database from Scratch in C++
+# ⚡ NexusDB: Bare-Metal Vector Engine & Offline RAG
 
-A fully working **Vector Database** built from scratch in C++ with a web UI.  
-Implements **HNSW**, **KD-Tree**, and **Brute Force** search algorithms side-by-side, plus a **RAG pipeline** powered by a local LLM via Ollama.
+![NexusDB Dashboard](./docs/hero-screenshot.png)
 
-> Built as an educational project to show how production vector databases like Pinecone, Weaviate, and Chroma actually work under the hood.
+NexusDB is a highly-concurrent, proprietary Vector Database and offline Retrieval-Augmented Generation (RAG) engine. Built entirely from scratch, this project bridges low-level systems engineering with high-fidelity enterprise data visualization.
 
----
-
-## What This Project Does
-
-| Feature | Description |
-|---|---|
-| **3 Search Algorithms** | HNSW (production-grade), KD-Tree, Brute Force — run all three and compare speed |
-| **3 Distance Metrics** | Cosine similarity, Euclidean distance, Manhattan distance |
-| **16D Demo Vectors** | 20 pre-loaded semantic vectors across 4 categories (CS, Math, Food, Sports) |
-| **2D PCA Scatter Plot** | Live visualization of semantic space — watch clusters form |
-| **Real Document Embedding** | Paste any text → Ollama embeds it with `nomic-embed-text` (768D) |
-| **RAG Pipeline** | Ask questions about your documents → HNSW retrieves context → local LLM answers |
-| **Full REST API** | CRUD endpoints: insert, delete, search, benchmark, hnsw-info |
+Instead of relying on cloud vector APIs (like Pinecone or Weaviate), this project implements the core mathematical, algorithmic, and memory-management architecture required for high-dimensional semantic search natively in **C++17**, visualized via a custom **Next.js** observability console.
 
 ---
 
-## How It Works
+## 🧠 Core Architecture & Features
 
-```
-Your Text
-    │
-    ▼
-Ollama (nomic-embed-text)          ← converts text to a 768-dimensional vector
-    │
-    ▼
-HNSW Index (C++)                   ← indexes the vector in a multilayer graph
-    │
-    ▼
-Semantic Search                    ← finds nearest neighbors in vector space
-    │
-    ▼
-Ollama (llama3.2)                  ← reads retrieved chunks, generates an answer
-    │
-    ▼
-Answer
-```
+### 1. The C++17 Vector Engine
+* **HNSW Indexing:** Implements Hierarchical Navigable Small World graphs for $O(\log N)$ vector retrieval.
+* **Algorithmic Benchmarking:** Runs HNSW, KD-Tree, and Linear Brute Force search algorithms side-by-side to benchmark dimensional scaling limits.
+* **Hardware Optimization:** Euclidean and Cosine similarity calculations optimized to leverage underlying compiler instructions (`-O2` / SIMD).
 
-**HNSW (Hierarchical Navigable Small World)** is the same algorithm used by Pinecone, Weaviate, Chroma, and Milvus. It builds a multilayer graph where each layer is progressively sparser — searches start at the top layer and zoom in, achieving O(log N) complexity instead of O(N) for brute force.
+### 2. Air-Gapped AI Pipeline (Local RAG)
+* **Local Inference:** Fully integrated with the local Ollama daemon.
+* **Embedding Core:** Utilizes `nomic-embed-text` for 768-dimensional contextual mapping.
+* **Generation Core:** Utilizes `llama3.2` for highly technical, context-aware synthesis.
+* **Security Posture:** 100% offline execution. Zero API keys, zero data leaks. Capable of analyzing sensitive proprietary infrastructure logs locally.
+
+### 3. Enterprise Observability Console (Next.js)
+* **Dynamic Network Topology:** Uses HTML5 Canvas to render a live, parallax data topography, visually tracing vector retrievals via PCA-reduced semantic coordinates and microsecond telemetry.
+* **Comet-Pro UI Design:** Glassmorphism overlays, distinct RAG citation cards, and real-time execution benchmarks.
 
 ---
 
-## Prerequisites
+## ⚙️ Data Flow Topology
 
-You need **3 things** installed on your Windows laptop:
-
-1. **MSYS2** (gives you g++ compiler)
-2. **Git**
-3. **Ollama** (runs the local AI models)
-
----
-
-## Step-by-Step Setup (Windows)
-
-### Step 1 — Install MSYS2 (C++ Compiler)
-
-1. Go to **https://www.msys2.org** and download the installer
-2. Run the installer, keep default path (`C:\msys64`)
-3. After install, open **MSYS2 UCRT64** from Start Menu (the orange icon)
-4. Run these commands inside the MSYS2 terminal:
-
-```bash
-pacman -Syu
-```
-*(Close and reopen the terminal if it asks you to)*
-
-```bash
-pacman -S mingw-w64-ucrt-x86_64-gcc
+```text
+[ Raw Document / Text ]
+          │
+          ▼
+[ Ollama: nomic-embed-text ]  ← Converts text to 768D semantic vector
+          │
+          ▼
+[ C++ HNSW Vector Index ]     ← Maps vector into a multilayer small-world graph
+          │
+          ▼
+[ Semantic KNN Search ]       ← Rapidly retrieves nearest contextual neighbors
+          │
+          ▼
+[ Ollama: llama3.2 ]          ← Ingests context chunks and synthesizes an answer
+          │
+          ▼
+[ Next.js RAG Terminal ]      ← Streams response with exact memory citation tags
 ```
 
-5. Add g++ to your Windows PATH:
-   - Press `Win + R`, type `sysdm.cpl`, press Enter
-   - Click **Advanced** → **Environment Variables**
-   - Under **System variables**, find **Path**, click **Edit**
-   - Click **New** and add: `C:\msys64\ucrt64\bin`
-   - Click OK on all windows
-   - **Open a new PowerShell** and verify:
-   ```
-   g++ --version
-   ```
-   You should see something like `g++ (GCC) 15.x.x`
+## 🛠️ Installation & Setup (Windows)
 
----
+This environment requires a C++ compiler (GCC) and the Ollama local AI daemon.
 
-### Step 2 — Install Git
+### 1. Install Dependencies
 
-1. Go to **https://git-scm.com/download/win** and download Git for Windows
-2. Run the installer with default settings
-3. Verify in PowerShell:
-```
-git --version
-```
+*   **MSYS2 (C++ Compiler):** Download from msys2.org. Install, open the MSYS2 UCRT64 terminal, and run:
+    ```bash
+    pacman -Syu
+    pacman -S mingw-w64-ucrt-x86_64-gcc
+    ```
+    *Note: Add `C:\msys64\ucrt64\bin` to your Windows System PATH.*
 
----
+*   **Ollama:** Download from ollama.com. Open PowerShell and pull the required offline models:
+    ```powershell
+    ollama pull nomic-embed-text
+    ollama pull llama3.2
+    ```
 
-### Step 3 — Install Ollama (Local AI Models)
-
-1. Go to **https://ollama.com** and click **Download for Windows**
-2. Run the installer
-3. Ollama starts automatically in the system tray
-4. Open **PowerShell** and pull the two required models:
+### 2. Clone & Compile the Engine
 
 ```powershell
-ollama pull nomic-embed-text
-```
-*(~274 MB — this is the embedding model)*
+git clone https://github.com/wayalbhushan/NexusDB.git
+cd NexusDB
 
-```powershell
-ollama pull llama3.2
-```
-*(~2 GB — this is the language model)*
-
-5. Verify Ollama is running:
-```powershell
-ollama list
-```
-You should see both models listed.
-
-> **Minimum specs for Ollama:** 8GB RAM recommended. The models will use ~3GB total.
-
----
-
-### Step 4 — Clone the Repository
-
-Open **PowerShell** and run:
-
-```powershell
-git clone https://github.com/YOUR_USERNAME/VectorDB.git
-cd VectorDB
-```
-
-*(Replace `YOUR_USERNAME` with the actual GitHub username)*
-
----
-
-### Step 5 — Compile the C++ Server
-
-Inside the `VectorDB` folder, run:
-
-```powershell
+# Compile the C++ Engine
 g++ -std=c++17 -O2 main.cpp -o db -lws2_32
 ```
 
----
+### 3. Launch the Stack
 
-### Step 6 — Run the Neural Stack
+You need two terminals to run the decoupled architecture.
 
-**Terminal 1** — Start the C++ Vector Engine:
+**Terminal 1 (Backend Daemon):**
 ```powershell
 ./db
 ```
 
-**Terminal 2** — Start the Next.js Neural Terminal:
+**Terminal 2 (Frontend Console):**
 ```powershell
 cd nexus-ui
 npm install
 npm run dev
 ```
 
-**Open your browser** and go to:
-```
-http://localhost:3000
-```
+Navigate to `http://localhost:3000` to access the Nexus Observatory.
 
 ---
 
-## 🛰️ Using the Neural Terminal
+## 📡 REST API Reference
 
-### 01_Observatory (Dashboard)
-- **HNSW Network Topology**: Watch the live constellation of your data. The map isn't just a plot; it's a dynamic network graph of your HNSW layers.
-- **Laser-Pulse Search**: Execute a search and watch "Success Green" laser pulses trace the shortest semantic path through your data topology.
-- **System Telemetry**: Real-time KPI cards for Ollama connectivity, Vector Resident memory, and Execution Latency.
+The C++ daemon exposes a lightweight HTTP server on port 8080 for programmatic access.
 
-### 02_Neural Chat (RAG Terminal)
-- **Semantic Retrieval**: Ask complex questions. The engine performs an HNSW K-NN search (k=3) against your 768D document embeddings.
-- **Context Citations**: Click on source cards to inspect exactly which document chunks were used to generate the AI response.
-- **Cold-Start Resilience**: Built-in 120s timeout and diagnostic headers (X-Engine) to handle local LLM warmups gracefully.
-
-### 03_Data Ingestion
-- **Document Streaming**: Paste raw text or lecture notes.
-- **Auto-Chunking**: The C++ engine automatically splits data into 250-word overlapping chunks for optimal retrieval density.
-- **Ollama Integration**: Real-time embedding generation using `nomic-embed-text`.
-
-### Tab 3: Ask AI (RAG Pipeline)
-
-1. Make sure you have inserted some documents in Tab 2 first
-2. Type a question about your documents
-3. Click **🤖 ASK AI**
-
-What happens behind the scenes:
-```
-1. Your question → embedded with nomic-embed-text (768D vector)
-2. HNSW search → finds 3 most semantically similar chunks
-3. Retrieved chunks → sent as context to llama3.2
-4. llama3.2 → generates an answer based only on your documents
-```
-
-The answer streams in with a typewriter effect. Click the **context chips** to see exactly which chunks the AI used.
+| Method | Endpoint | Payload | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/doc/insert` | `{"title":"...","text":"..."}` | Generates 768D embedding and stores chunk. |
+| `POST` | `/doc/ask` | `{"question":"...","k":3}` | Triggers the full RAG generation pipeline. |
+| `GET` | `/benchmark` | `?v=...&k=5&metric=cosine` | Benchmarks HNSW vs KD-Tree vs Brute Force. |
+| `GET` | `/hnsw-info` | — | Returns diagnostic graph structure and layer stats. |
+| `GET` | `/status` | — | Pings Ollama daemon connectivity. |
 
 ---
 
-## REST API Reference
+## 🔬 Algorithmic Deep Dive
 
-The server exposes a full REST API at `http://localhost:8080`.
-
-### Demo Vector Endpoints
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/search?v=f1,f2,...&k=5&metric=cosine&algo=hnsw` | K-NN search |
-| `POST` | `/insert` | Insert a demo vector |
-| `DELETE` | `/delete/:id` | Delete by ID |
-| `GET` | `/items` | List all demo vectors |
-| `GET` | `/benchmark?v=...&k=5&metric=cosine` | Compare all 3 algorithms |
-| `GET` | `/hnsw-info` | HNSW graph structure and layer stats |
-| `GET` | `/stats` | Database statistics |
-
-### Document & RAG Endpoints
-
-| Method | Endpoint | Body | Description |
-|---|---|---|---|
-| `POST` | `/doc/insert` | `{"title":"...","text":"..."}` | Embed and store document |
-| `GET` | `/doc/list` | — | List all stored documents |
-| `DELETE` | `/doc/delete/:id` | — | Delete document chunk |
-| `POST` | `/doc/ask` | `{"question":"...","k":3}` | RAG: retrieve + generate |
-| `GET` | `/status` | — | Ollama status and model info |
-
-### Example: Search via curl
-
-```powershell
-curl "http://localhost:8080/search?v=0.9,0.8,0.7,0.6,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1,0.1&k=3&metric=cosine&algo=hnsw"
-```
-
-### Example: Ask a question via curl
-
-```powershell
-curl -X POST http://localhost:8080/doc/ask `
-  -H "Content-Type: application/json" `
-  -d '{"question":"What is dynamic programming?","k":3}'
-```
-
----
-
-## Project Structure
-
-```
-VectorDB/
-├── main.cpp        ← C++ backend (HNSW, KD-Tree, BruteForce, REST API, RAG)
-├── httplib.h       ← Single-header HTTP server library (cpp-httplib)
-├── index.html      ← Frontend (PCA scatter plot, chat UI, benchmark)
-└── README.md       ← This file
-```
-
-### Architecture (main.cpp)
-
-```
-BruteForce          O(N·d)      Exact, baseline
-KDTree              O(log N)    Exact, axis-aligned partitioning
-HNSW                O(log N)    Approximate, multilayer small-world graph
-
-VectorDB            Unified interface over all 3 (16D demo vectors)
-DocumentDB          HNSW-only index for real Ollama embeddings (768D)
-OllamaClient        HTTP client → /api/embeddings + /api/generate
-```
-
----
-
-## Algorithm Deep Dive
+Why build custom indices? To understand the mathematical limits of dimensional scaling.
 
 ### HNSW (Hierarchical Navigable Small World)
-
-Nodes are inserted into a multilayer graph. Each node randomly gets assigned a maximum layer. Layer 0 has all nodes with many connections; higher layers have fewer nodes (exponentially fewer) with longer-range connections.
-
-**Insert:** Start at the top layer, greedily find the nearest node, drop a layer, repeat. At each layer from your assigned max down to 0, run a beam search (ef_construction=200) and connect to the M nearest neighbors bidirectionally.
-
-**Search:** Same greedy descent from top layer. At layer 0, expand to ef nearest candidates using a priority queue.
-
-**Why it's fast:** The upper layers act like a highway — you quickly get to the right neighborhood, then zoom in at layer 0.
+The production standard. Nodes are inserted into a multilayer probabilistic graph. Upper layers act as semantic "highways," allowing the search to skip vast amounts of irrelevant data before zooming into denser, lower layers. This achieves true $O(\log N)$ search complexity even in high-dimensional spaces (like 768D embeddings), which is why it powers modern platforms like Milvus and Pinecone.
 
 ### KD-Tree (K-Dimensional Tree)
+A binary space partitioning tree. It aggressively prunes search spaces using axis-aligned bounds. While it achieves $O(\log N)$ in low dimensions, it suffers heavily from the Curse of Dimensionality. Above ~20 dimensions, the volume of the space scales so rapidly that almost all data points sit on the "boundaries" of the hyperspheres, forcing the algorithm to evaluate nearly every node—effectively degrading back to $O(N)$.
 
-Binary space partitioning. Each node splits space along one dimension (cycling through all dimensions). Search prunes entire subtrees when the closest possible point in that subtree can't beat the current best — the "ball within hyperslab" check.
-
-**Weakness:** Degrades with high dimensions (curse of dimensionality). Works well for ≤20D, becomes close to brute force at 768D.
-
-### Why HNSW Wins at High Dimensions
-
-KD-Tree pruning relies on axis-aligned distance bounds. In high dimensions, almost all the space is near the boundary of the hypersphere — no subtrees get pruned. HNSW's graph-based approach doesn't have this problem.
+### Linear Brute Force
+The baseline truth metric. Evaluates the Cosine or Euclidean distance of the query vector against every resident vector in memory. Complexity is strictly $O(N \cdot d)$. Used within this system solely to verify the accuracy/recall of the HNSW approximate nearest neighbors.
 
 ---
 
-## Common Issues
+## ⚠️ Troubleshooting
 
-| Problem | Fix |
-|---|---|
-| `Ollama: OFFLINE` in header | Run `ollama serve` in a terminal |
-| Embedding takes forever | Ollama is downloading the model on first use, wait 2 min |
-| `g++: command not found` | Add `C:\msys64\ucrt64\bin` to Windows PATH |
-| Port 8080 already in use | Kill the process: `netstat -ano \| findstr 8080` then `taskkill /PID <pid> /F` |
-| LLM answer is slow | Normal — llama3.2 takes 10–30s on a laptop CPU. Use llama3.2:1b for faster answers |
-
-### Use a Smaller/Faster LLM
-
-If llama3.2 is too slow on your laptop, switch to the 1B model:
-
-```powershell
-ollama pull llama3.2:1b
-```
-
-Then edit [main.cpp](main.cpp) line where `genModel` is set:
-```cpp
-std::string genModel = "llama3.2:1b";   // change this
-```
-Recompile and restart.
+| Issue | Resolution |
+| :--- | :--- |
+| **Ollama: OFFLINE** | Ensure the Ollama background process is running (`ollama serve`). |
+| **AI CORE UNREACHABLE** | First-time queries suffer from a "Cold Start" (loading a 2GB model into RAM). Ensure your frontend timeout is set to at least 120s. |
+| **High Inference Latency** | Local LLMs bottleneck on CPU matrix multiplication. If standard `llama3.2` is too slow on your hardware, switch the backend configuration to the 1B parameter model: `ollama pull llama3.2:1b`. |
 
 ---
 
-## License
-
-MIT — use this however you want.
+**Architected and engineered by Bhushan wayal**
