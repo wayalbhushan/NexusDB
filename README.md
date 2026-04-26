@@ -1,4 +1,4 @@
-# ⚡ NexusDB: Bare-Metal Vector Engine & Offline RAG
+# ⚡ NexusDB: Robust Vector Engine & Offline RAG
 
 ![NexusDB Dashboard](./docs/hero-screenshot.png)
 
